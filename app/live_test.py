@@ -18,7 +18,8 @@ async def main():
 
     async with client.aio.live.connect(
         model=MODEL,
-        config=config,
+        # pyrefly: ignore [bad-argument-type]
+        config=config, # type: ignore
     ) as session:
 
      # Send content... its by me 

@@ -1,0 +1,232 @@
+
+from langgraph.graph import StateGraph, START, END
+
+from app.agent.state import AgentState
+from app.agent.llm import classify_intent
+from app.agent.application import check_application_status
+
+from app.rag.retriever import KnowledgeRetriever
+from app.rag.context import format_context
+from app.rag.chain import generate_answer
+from app.memory.redis import RedisMemory
+from app.db.repository import ConversationRepository
+from app.agent.checkpointer import checkpointer
+
+retriever = KnowledgeRetriever()
+memory = RedisMemory()
+conversation_repo = ConversationRepository()
+
+def process_request(state: AgentState):
+    intent = classify_intent(state["user_input"])
+
+    return {
+        "intent": intent,
+    }
+
+
+def route_request(state: AgentState):
+    intent = state["intent"]
+
+    if intent in {
+        "admission_documents",
+        "fee_information",
+        "general_query",
+    }:
+        return "knowledge"
+
+    if intent in {
+        "application_status",
+        "appointment",
+    }:
+        return "action"
+
+    if intent == "technical_support":
+        return "support"
+
+    return "knowledge"
+
+
+def knowledge_node(state: AgentState):
+    question = state["user_input"]
+
+    # 1. Retrieve relevant documents
+    results = retriever.hybrid_search(question, k=3)
+
+    # 2. Convert retrieved documents into context
+    context = format_context(results)
+
+    # 3. Generate grounded answer using Gemini
+    answer = generate_answer(
+        question=question,
+        context=context,
+    )
+
+    return {
+        "context": context,
+        "response": answer,
+    }
+
+
+def action_node(state: AgentState):
+    intent = state["intent"]
+
+    if intent == "application_status":
+        application_number = "APP1001"
+
+        result = check_application_status(application_number)
+
+        return {
+            "tool_result": str(result),
+            "response": str(result),
+        }
+
+    return {
+        "response": "This action is not implemented yet."
+    }
+
+
+def support_node(state: AgentState):
+    return {
+        "response": "This request will be handled as a support request."
+    }
+
+def update_history(state: AgentState):
+    history = state.get("conversation_history", []).copy()
+
+    history.append(
+        {
+            "role": "user",
+            "content": state["user_input"],
+        }
+    )
+
+    if state.get("response"):
+        history.append(
+            {
+                "role": "assistant",
+                "content": state["response"],
+            }
+        )
+
+    return {
+        "conversation_history": history,
+    }
+
+
+def build_graph():
+    graph = StateGraph(AgentState)
+
+    graph.add_node("process_request", process_request)
+    graph.add_node("knowledge", knowledge_node)
+    graph.add_node("update_history", update_history)
+    graph.add_node("action", action_node)
+    graph.add_node("support", support_node)
+
+    graph.add_edge(START, "process_request")
+
+    graph.add_conditional_edges(
+        "process_request",
+        route_request,
+        {
+            "knowledge": "knowledge",
+            "action": "action",
+            "support": "support",
+        },
+    )
+
+    graph.add_edge("knowledge", "update_history")
+    graph.add_edge("action", "update_history")
+    graph.add_edge("support", "update_history")
+    graph.add_edge("update_history", END)
+
+    return graph.compile(checkpointer=checkpointer)
+
+
+agent = build_graph()
+
+
+
+def run_agent(session_id: str, user_input: str):
+    # 1. Load active session state from Redis
+    previous_state = memory.load(session_id)
+
+    # 2. Log user message to PostgreSQL
+    conversation_repo.add_message(
+        session_id=session_id,
+        role="user",
+        content=user_input,
+    )
+
+    # 3. Initialize state dictionary
+    state = {
+        "user_input": user_input,
+        "intent": "",
+        "context": "",
+        "tool_result": "",
+        "response": "",
+        "confidence": 0.0,
+        "conversation_history": [],
+    }
+
+    # 4. Restore previous state details if they exist
+    if previous_state:
+        state["conversation_history"] = previous_state.get(
+            "conversation_history",
+            [],
+        )
+        state["context"] = previous_state.get("context", "")
+        state["tool_result"] = previous_state.get("tool_result", "")
+
+    # 5. Append current user input to conversation history
+    state["conversation_history"].append(
+        {
+            "role": "user",
+            "content": user_input,
+        }
+    )
+
+    # 6. Invoke agent graph once with Postgres checkpointer thread config
+    result = agent.invoke(
+        state,
+        config={
+            "configurable": {
+                "thread_id": session_id,
+            }
+        },
+    )
+
+    # 7. Append assistant response to history
+    assistant_response = result.get("response", "")
+    
+    if "conversation_history" not in result:
+        result["conversation_history"] = state["conversation_history"]
+
+    result["conversation_history"].append(
+        {
+            "role": "assistant",
+            "content": assistant_response,
+        }
+    )
+
+    # 8. Log assistant response to PostgreSQL
+    conversation_repo.add_message(
+        session_id=session_id,
+        role="assistant",
+        content=assistant_response,
+    )
+
+    # 9. Save current state back to Redis short-term memory
+    memory.save(
+        session_id,
+        {
+            "user_input": user_input,
+            "intent": result.get("intent", ""),
+            "context": result.get("context", ""),
+            "tool_result": result.get("tool_result", ""),
+            "response": assistant_response,
+            "confidence": result.get("confidence", 0.0),
+            "conversation_history": result["conversation_history"],
+        },
+    )
+
+    return result

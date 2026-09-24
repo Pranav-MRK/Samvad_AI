@@ -3,14 +3,34 @@ name = "samvadai"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12, <3.13"
 dependencies = [
     "dotenv>=0.9.9",
     "fastapi>=0.141.1",
     "google-genai>=2.19.0",
+    "langchain-community>=0.4.2",
+    "langchain-google-genai>=4.3.7",
+    "langchain-huggingface>=1.2.2",
+    "langchain-text-splitters>=1.1.2",
+    "langgraph>=1.2.11",
+    "langgraph-checkpoint-postgres>=3.1.2",
+    "langsmith>=0.12.1",
+    "numpy<2",
+    "opensearch-py>=3.2.0",
+    "psycopg2-binary>=2.9.13",
+    "psycopg[binary,pool]>=3.3.5",
     "pyaudio>=0.2.14",
     "pydantic-settings>=2.15.0",
     "python-dotenv>=1.2.3",
+    "redis>=8.1.0",
+    "sentence-transformers>=6.0.1",
+    "sqlalchemy>=2.0.52",
     "uvicorn[standard]>=0.52.4",
     "websockets>=16.1.1",
 ]
+
+[tool.pyrefly]
+python-interpreter-path = ".venv/bin/python3"
+python-version = "3.12"
+search-path = ["."]
+

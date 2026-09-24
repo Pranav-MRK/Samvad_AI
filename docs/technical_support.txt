@@ -1,0 +1,9 @@
+Online Admission Portal — Technical Support
+
+If a student cannot upload a document, they should first verify that the document is clear, readable, and in the format specified by the admission portal.
+
+Students should also check the file size requirements before uploading.
+
+If the problem continues, the student should contact the college admission support team and provide their application number and a description of the issue.
+
+Students should not share passwords or other sensitive account credentials with support staff.
